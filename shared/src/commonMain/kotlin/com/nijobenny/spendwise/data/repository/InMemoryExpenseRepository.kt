@@ -8,8 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
- * Temporary implementation used until the SQLDelight database is added.
- * Also handy as a fake in tests.
+ * In-memory implementation, used as a fake in unit tests.
+ * Like Room's REPLACE strategy: an expense with an existing id is updated, id = 0 gets a new id.
  */
 class InMemoryExpenseRepository : ExpenseRepository {
 
@@ -19,8 +19,10 @@ class InMemoryExpenseRepository : ExpenseRepository {
     override fun observeExpenses(): Flow<List<Expense>> = expenses.asStateFlow()
 
     override suspend fun addExpense(expense: Expense): Long {
-        val id = nextId++
-        expenses.update { it + expense.copy(id = id) }
+        val id = if (expense.id != 0L) expense.id else nextId++
+        if (id >= nextId) nextId = id + 1
+        val saved = expense.copy(id = id)
+        expenses.update { list -> list.filterNot { it.id == id } + saved }
         return id
     }
 

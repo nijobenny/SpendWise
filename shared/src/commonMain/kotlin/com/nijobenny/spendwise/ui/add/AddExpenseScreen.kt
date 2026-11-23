@@ -108,7 +108,7 @@ fun AddExpenseScreen(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        TopBar(onClose = {
+        TopBar(title = if (state.isEditing) "Edit expense" else "New expense", onClose = {
             focusManager.clearFocus()
             onClose()
         })
@@ -172,7 +172,7 @@ fun AddExpenseScreen(
         }
 
         GradientButton(
-            text = "Save expense",
+            text = if (state.isEditing) "Save changes" else "Save expense",
             loading = state.isSaving,
             onClick = {
                 focusManager.clearFocus()
@@ -192,7 +192,7 @@ private fun errorMessage(error: ExpenseValidator.Error?): String = when (error) 
 }
 
 @Composable
-private fun TopBar(onClose: () -> Unit) {
+private fun TopBar(title: String, onClose: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -208,7 +208,7 @@ private fun TopBar(onClose: () -> Unit) {
             Text("✕", color = SpendColors.TextPrimary, fontSize = 16.sp)
         }
         Spacer(Modifier.width(16.dp))
-        Text("New expense", style = MaterialTheme.typography.titleLarge, color = SpendColors.TextPrimary)
+        Text(title, style = MaterialTheme.typography.titleLarge, color = SpendColors.TextPrimary)
     }
 }
 
@@ -233,7 +233,7 @@ private fun AmountInput(
     val amountStyle = TextStyle(fontSize = 54.sp, fontWeight = FontWeight.Bold, color = SpendColors.TextPrimary)
 
     Column(
-        modifier = modifier.fillMaxWidth().padding(top = 24.dp, bottom = 20.dp),
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("Amount", style = MaterialTheme.typography.labelLarge, color = SpendColors.TextMuted)
@@ -297,7 +297,7 @@ private fun SectionLabel(text: String) {
         text = text,
         style = MaterialTheme.typography.labelLarge,
         color = SpendColors.TextMuted,
-        modifier = Modifier.padding(top = 20.dp, bottom = 10.dp),
+        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
     )
 }
 
@@ -314,7 +314,7 @@ private fun PremiumTextField(
         onValueChange = onValueChange,
         placeholder = { Text(placeholder) },
         singleLine = singleLine,
-        minLines = if (singleLine) 1 else 3,
+        minLines = if (singleLine) 1 else 2,
         isError = isError,
         shape = RoundedCornerShape(16.dp),
         textStyle = MaterialTheme.typography.bodyLarge,

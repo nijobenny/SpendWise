@@ -1,6 +1,7 @@
 package com.nijobenny.spendwise
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -27,32 +28,35 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.nijobenny.spendwise.di.AppContainer
 import com.nijobenny.spendwise.platform.PlatformBackHandler
 import com.nijobenny.spendwise.ui.ExpenseViewModel
 import com.nijobenny.spendwise.ui.UiEvent
 import com.nijobenny.spendwise.ui.add.AddExpenseScreen
 import com.nijobenny.spendwise.ui.home.HomeScreen
+import com.nijobenny.spendwise.ui.splash.SplashIntro
 import com.nijobenny.spendwise.ui.theme.SpendColors
 import com.nijobenny.spendwise.ui.theme.SpendWiseTheme
 import kotlinx.coroutines.launch
+import org.koin.compose.viewmodel.koinViewModel
 
 private enum class Screen { Home, Add }
 
 @Composable
 fun App() {
     SpendWiseTheme {
-        val viewModel: ExpenseViewModel = viewModel { AppContainer.createExpenseViewModel() }
+        val viewModel: ExpenseViewModel = koinViewModel()
         val homeState by viewModel.homeState.collectAsStateWithLifecycle()
         val formState by viewModel.formState.collectAsStateWithLifecycle()
+        val ratesState by viewModel.ratesState.collectAsStateWithLifecycle()
 
         var screen by remember { mutableStateOf(Screen.Home) }
+        var showIntro by rememberSaveable { mutableStateOf(true) }
         val snackbarHostState = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
 
@@ -71,9 +75,9 @@ fun App() {
         LaunchedEffect(viewModel) {
             viewModel.events.collect { event ->
                 when (event) {
-                    UiEvent.ExpenseSaved -> {
+                    is UiEvent.ExpenseSaved -> {
                         screen = Screen.Home
-                        showMessage("Expense added ✓")
+                        showMessage(if (event.edited) "Changes saved ✓" else "Expense added ✓")
                     }
                 }
             }
@@ -106,7 +110,16 @@ fun App() {
                 when (target) {
                     Screen.Home -> HomeScreen(
                         state = homeState,
-                        onAddClick = { screen = Screen.Add },
+                        ratesState = ratesState,
+                        onRetryRates = viewModel::loadRates,
+                        onAddClick = {
+                            viewModel.resetForm()
+                            screen = Screen.Add
+                        },
+                        onEdit = { expense ->
+                            viewModel.startEditing(expense)
+                            screen = Screen.Add
+                        },
                         onDelete = { expense ->
                             viewModel.delete(expense)
                             showMessage("Deleted \"${expense.title}\"", actionLabel = "Undo") {
@@ -114,6 +127,9 @@ fun App() {
                             }
                         },
                         onLoadSample = viewModel::loadSampleData,
+                        onPreviousMonth = viewModel::showPreviousMonth,
+                        onNextMonth = viewModel::showNextMonth,
+                        onSelectMonth = viewModel::selectMonth,
                     )
                     Screen.Add -> AddExpenseScreen(
                         state = formState,
@@ -141,6 +157,15 @@ fun App() {
                     contentColor = SpendColors.TextPrimary,
                     actionColor = SpendColors.Cyan,
                 )
+            }
+
+            // Animated intro on top of the home screen; fades and zooms away to reveal it.
+            AnimatedVisibility(
+                visible = showIntro,
+                enter = fadeIn(tween(0)),
+                exit = fadeOut(tween(400)) + scaleOut(targetScale = 1.08f, animationSpec = tween(400)),
+            ) {
+                SplashIntro(onFinished = { showIntro = false })
             }
         }
     }

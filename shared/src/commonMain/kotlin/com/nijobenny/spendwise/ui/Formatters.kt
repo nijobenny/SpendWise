@@ -39,3 +39,28 @@ fun relativeTime(thenMillis: Long, nowMillis: Long): String {
         else -> "${minutes / (60 * 24 * 7)} w ago"
     }
 }
+
+private val MONTH_NAMES = listOf(
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+fun monthName(month: Int): String = MONTH_NAMES[month - 1]
+
+fun shortMonthName(month: Int): String = MONTH_NAMES[month - 1].take(3)
+
+/** Compact amounts for charts: ₹850, ₹9.2k, ₹1.4L (INR) / €1.4M. */
+fun formatCompact(amountMinor: Long, currencyCode: String): String {
+    val major = amountMinor / 100
+    val symbol = currencySymbol(currencyCode)
+    fun oneDecimal(value: Long, unit: Long): String {
+        val tenths = value * 10 / unit
+        return if (tenths % 10 == 0L) "${tenths / 10}" else "${tenths / 10}.${tenths % 10}"
+    }
+    return when {
+        major < 1_000 -> "$symbol$major"
+        currencyCode == "INR" && major >= 1_00_000 -> "$symbol${oneDecimal(major, 1_00_000)}L"
+        major >= 1_000_000 -> "$symbol${oneDecimal(major, 1_000_000)}M"
+        else -> "$symbol${oneDecimal(major, 1_000)}k"
+    }
+}

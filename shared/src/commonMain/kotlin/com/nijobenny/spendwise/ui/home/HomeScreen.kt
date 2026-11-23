@@ -1,5 +1,19 @@
 package com.nijobenny.spendwise.ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.fillMaxHeight
+import com.nijobenny.spendwise.domain.model.MonthKey
+import com.nijobenny.spendwise.domain.usecase.MonthTotal
+import com.nijobenny.spendwise.domain.usecase.MonthlyInsights
+import com.nijobenny.spendwise.ui.formatCompact
+import com.nijobenny.spendwise.ui.monthName
+import com.nijobenny.spendwise.ui.shortMonthName
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -61,6 +75,9 @@ import com.nijobenny.spendwise.domain.model.Expense
 import com.nijobenny.spendwise.domain.usecase.ExpenseSummary
 import com.nijobenny.spendwise.platform.currentTimeMillis
 import com.nijobenny.spendwise.ui.HomeUiState
+import com.nijobenny.spendwise.ui.RatesUiState
+import com.nijobenny.spendwise.domain.model.Money
+import com.nijobenny.spendwise.domain.usecase.GetExchangeRatesUseCase
 import com.nijobenny.spendwise.ui.components.AnimatedAmount
 import com.nijobenny.spendwise.ui.components.DonutChart
 import com.nijobenny.spendwise.ui.components.GradientFab
@@ -75,11 +92,19 @@ import kotlin.math.roundToInt
 @Composable
 fun HomeScreen(
     state: HomeUiState,
+    ratesState: RatesUiState,
+    onRetryRates: () -> Unit,
     onAddClick: () -> Unit,
+    onEdit: (Expense) -> Unit,
     onDelete: (Expense) -> Unit,
     onLoadSample: () -> Unit,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onSelectMonth: (MonthKey) -> Unit,
 ) {
-    val now = remember(state.expenses) { currentTimeMillis() }
+    val insights = state.insights
+    val expenses = insights.expenses
+    val now = remember(expenses) { currentTimeMillis() }
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     Box(
@@ -91,36 +116,78 @@ fun HomeScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = topInset + 16.dp, bottom = 140.dp),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = topInset + 16.dp, bottom = 170.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "header") { Header() }
-            item(key = "balance") { BalanceCard(state.summary) }
-            if (state.summary.count > 0) {
-                item(key = "breakdown") { BreakdownCard(state.summary, Modifier.animateItem()) }
+            item(key = "month") {
+                MonthSwitcher(
+                    month = insights.month,
+                    canGoNext = state.canGoToNextMonth,
+                    onPrevious = onPreviousMonth,
+                    onNext = onNextMonth,
+                )
+            }
+            item(key = "balance") { BalanceCard(insights) }
+            if (insights.hasAnyExpenses) {
+                item(key = "trend") {
+                    TrendCard(insights.trend, selected = insights.month, onSelect = onSelectMonth, modifier = Modifier.animateItem())
+                }
+            }
+            if (insights.summary.count > 0) {
+                item(key = "currencies") {
+                    CurrencyCard(insights.summary.total, insights.month, ratesState, onRetryRates, Modifier.animateItem())
+                }
+            }
+            if (insights.summary.count > 0) {
+                item(key = "breakdown") { BreakdownCard(insights.summary, Modifier.animateItem()) }
             }
             item(key = "recentTitle") {
                 SectionTitle(
-                    title = "Recent activity",
-                    trailing = if (state.expenses.isNotEmpty()) "Swipe left to delete" else null,
+                    title = "Transactions",
+                    trailing = if (expenses.isNotEmpty()) "Tap to edit · swipe to delete" else null,
                 )
             }
-            if (state.expenses.isEmpty() && !state.isLoading) {
+            if (!state.isLoading && !insights.hasAnyExpenses) {
                 item(key = "empty") { EmptyState(onLoadSample, Modifier.animateItem()) }
+            } else if (!state.isLoading && expenses.isEmpty()) {
+                item(key = "emptyMonth") {
+                    Text(
+                        "No expenses in ${monthName(insights.month.month)}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SpendColors.TextMuted,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp).animateItem(),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
-            items(state.expenses, key = { it.id }) { expense ->
+            items(expenses, key = { it.id }) { expense ->
                 SwipeToDeleteRow(
                     expense = expense,
                     nowMillis = now,
                     onDelete = { onDelete(expense) },
+                    onClick = { onEdit(expense) },
                     modifier = Modifier.animateItem(),
                 )
             }
         }
 
+        // Soft fade so list content never collides with the floating button.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, SpendColors.Background.copy(alpha = 0.92f), SpendColors.Background)
+                    )
+                ),
+        )
+
         GradientFab(
             onClick = onAddClick,
-            pulse = state.expenses.isEmpty() && !state.isLoading,
+            pulse = !insights.hasAnyExpenses && !state.isLoading,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
@@ -184,7 +251,8 @@ private fun Header() {
 }
 
 @Composable
-private fun BalanceCard(summary: ExpenseSummary) {
+private fun BalanceCard(insights: MonthlyInsights) {
+    val summary = insights.summary
     val transition = rememberInfiniteTransition(label = "card")
     val shift by transition.animateFloat(
         initialValue = 0f,
@@ -193,6 +261,7 @@ private fun BalanceCard(summary: ExpenseSummary) {
         label = "shift",
     )
     val topCategory = summary.byCategory.keys.firstOrNull()
+    val change = insights.changeVsPreviousPercent
 
     Box(
         modifier = Modifier
@@ -214,7 +283,11 @@ private fun BalanceCard(summary: ExpenseSummary) {
             .padding(24.dp),
     ) {
         Column {
-            Text("Total spent", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f))
+            Text(
+                "Spent in ${monthName(insights.month.month)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = 0.85f),
+            )
             Spacer(Modifier.height(6.dp))
             AnimatedAmount(
                 money = summary.total,
@@ -224,10 +297,277 @@ private fun BalanceCard(summary: ExpenseSummary) {
             Spacer(Modifier.height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GlassPill("${summary.count} ${if (summary.count == 1) "expense" else "expenses"}")
-                if (topCategory != null) GlassPill("Top: ${topCategory.emoji} ${topCategory.displayName}")
+                if (change != null) {
+                    val arrow = if (change > 0) "▲" else if (change < 0) "▼" else "•"
+                    GlassPill("$arrow ${kotlin.math.abs(change)}% vs ${shortMonthName(insights.month.previous().month)}")
+                } else if (topCategory != null) {
+                    GlassPill("Top: ${topCategory.emoji} ${topCategory.displayName}")
+                }
             }
         }
     }
+}
+
+/** "‹  November 2026  ›" with a directional slide when the month changes. */
+@Composable
+private fun MonthSwitcher(
+    month: MonthKey,
+    canGoNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RoundIconButton("‹", enabled = true, onClick = onPrevious)
+        AnimatedContent(
+            targetState = month,
+            transitionSpec = {
+                val forward = targetState > initialState
+                (slideInHorizontally(tween(300)) { if (forward) it / 2 else -it / 2 } + fadeIn(tween(300))) togetherWith
+                    (slideOutHorizontally(tween(300)) { if (forward) -it / 2 else it / 2 } + fadeOut(tween(200)))
+            },
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+            label = "month",
+        ) { shown ->
+            Text(
+                "${monthName(shown.month)} ${shown.year}",
+                style = MaterialTheme.typography.titleMedium,
+                color = SpendColors.TextPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        RoundIconButton("›", enabled = canGoNext, onClick = onNext)
+    }
+}
+
+@Composable
+private fun RoundIconButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.3f }
+            .clip(CircleShape)
+            .background(SpendColors.SurfaceHigh)
+            .bounceClick(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(symbol, fontSize = 22.sp, color = SpendColors.TextPrimary)
+    }
+}
+
+/** Animated bar chart of the last 6 months. Tap a bar to jump to that month. */
+@Composable
+private fun TrendCard(
+    trend: List<MonthTotal>,
+    selected: MonthKey,
+    onSelect: (MonthKey) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val max = trend.maxOfOrNull { it.total.amountMinor }?.coerceAtLeast(1) ?: 1
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(SpendColors.Surface)
+            .border(1.dp, SpendColors.Outline, RoundedCornerShape(24.dp))
+            .padding(20.dp),
+    ) {
+        Text("Last 6 months", style = MaterialTheme.typography.titleMedium, color = SpendColors.TextPrimary)
+        Spacer(Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().height(150.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            trend.forEach { item ->
+                val isSelected = item.month == selected
+                val fraction by animateFloatAsState(
+                    targetValue = item.total.amountMinor.toFloat() / max,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 120f),
+                    label = "bar",
+                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .bounceClick { onSelect(item.month) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom,
+                ) {
+                    // Label slot is always reserved so every bar shares the same baseline height.
+                    Text(
+                        formatCompact(item.total.amountMinor, item.total.currencyCode),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isSelected && item.total.amountMinor > 0) SpendColors.TextPrimary else Color.Transparent,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .fillMaxHeight((fraction * 0.82f).coerceAtLeast(0.03f))
+                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                            .background(
+                                if (isSelected) {
+                                    Brush.verticalGradient(listOf(SpendColors.Cyan, SpendColors.Violet))
+                                } else {
+                                    Brush.verticalGradient(listOf(SpendColors.Violet.copy(alpha = 0.45f), SpendColors.Violet.copy(alpha = 0.15f)))
+                                }
+                            ),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        shortMonthName(item.month.month),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isSelected) SpendColors.TextPrimary else SpendColors.TextMuted,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Month total converted live into the currencies of the countries I'm moving to. */
+@Composable
+private fun CurrencyCard(
+    total: Money,
+    month: MonthKey,
+    ratesState: RatesUiState,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(SpendColors.Surface)
+            .border(1.dp, SpendColors.Outline, RoundedCornerShape(24.dp))
+            .padding(20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${monthName(month.month)} in other currencies",
+                style = MaterialTheme.typography.titleMedium,
+                color = SpendColors.TextPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            if (ratesState is RatesUiState.Ready) {
+                Text(
+                    "ECB · ${shortDate(ratesState.rates.date)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SpendColors.TextMuted,
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        AnimatedContent(
+            targetState = ratesState,
+            contentKey = { it::class },
+            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
+            label = "rates",
+        ) { state ->
+            when (state) {
+                is RatesUiState.Loading -> CurrencyGrid { code -> CurrencyTile(code, value = null) }
+                is RatesUiState.Ready -> CurrencyGrid { code -> CurrencyTile(code, value = state.rates.convert(total, code)) }
+                is RatesUiState.Error -> Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SpendColors.SurfaceHigh)
+                        .bounceClick(onClick = onRetry)
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("📡", fontSize = 18.sp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Couldn't load exchange rates. Tap to retry.",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = SpendColors.TextMuted,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrencyGrid(tile: @Composable (String) -> Unit) {
+    val codes = GetExchangeRatesUseCase.DEFAULT_TARGETS
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        codes.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                pair.forEach { code ->
+                    Box(modifier = Modifier.weight(1f)) { tile(code) }
+                }
+            }
+        }
+    }
+}
+
+private fun flagFor(code: String): String = when (code) {
+    "EUR" -> "🇪🇺"
+    "CHF" -> "🇨🇭"
+    "GBP" -> "🇬🇧"
+    "USD" -> "🇺🇸"
+    else -> "🏳️"
+}
+
+/** A currency tile. Shows a pulsing placeholder while [value] is loading. */
+@Composable
+private fun CurrencyTile(code: String, value: Money?) {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val shimmer by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+        label = "shimmerAlpha",
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(SpendColors.SurfaceHigh)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(flagFor(code), fontSize = 16.sp)
+            Spacer(Modifier.width(6.dp))
+            Text(code, style = MaterialTheme.typography.labelMedium, color = SpendColors.TextMuted)
+        }
+        Spacer(Modifier.height(6.dp))
+        if (value != null) {
+            AnimatedAmount(
+                money = value,
+                style = MaterialTheme.typography.titleMedium,
+                color = SpendColors.TextPrimary,
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(18.dp)
+                    .graphicsLayer { alpha = shimmer }
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(SpendColors.Outline)
+            )
+        }
+    }
+}
+
+/** "2026-11-23" -> "23 Nov". */
+private fun shortDate(isoDate: String): String {
+    val parts = isoDate.split("-")
+    if (parts.size != 3) return isoDate
+    val month = parts[1].toIntOrNull() ?: return isoDate
+    if (month !in 1..12) return isoDate
+    return "${parts[2].trimStart('0')} ${shortMonthName(month)}"
 }
 
 @Composable
@@ -363,6 +703,7 @@ private fun SwipeToDeleteRow(
     expense: Expense,
     nowMillis: Long,
     onDelete: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -401,6 +742,7 @@ private fun SwipeToDeleteRow(
             nowMillis = nowMillis,
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .bounceClick(onClick = onClick)
                 .draggable(
                     orientation = Orientation.Horizontal,
                     state = rememberDraggableState { delta ->

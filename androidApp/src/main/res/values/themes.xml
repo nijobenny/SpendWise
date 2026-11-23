@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Main app theme: dark window so there's never a white flash. -->
+    <style name="Theme.SpendWise" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/spendwise_background</item>
+    </style>
+
+    <!-- System splash (Android 12+ API, back-ported to older versions by core-splashscreen). -->
+    <style name="Theme.SpendWise.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/spendwise_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.SpendWise</item>
+    </style>
+</resources>
